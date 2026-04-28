@@ -44,7 +44,7 @@ python scripts/register_model_mlflow.py
 ## Monitoring
 
 - Prometheus: http://localhost:9090
-- Grafana: http://localhost:3000  (admin / admin)
+- Grafana: http://localhost:3000  
 - MLflow: http://localhost:5000
 
 ## Stack
