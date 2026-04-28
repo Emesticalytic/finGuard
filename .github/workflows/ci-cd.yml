@@ -1,0 +1,108 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/finguard
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: finguard
+          POSTGRES_PASSWORD: finguard
+          POSTGRES_DB: finguard
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U finguard"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run tests
+        env:
+          DB_URL: postgresql+asyncpg://finguard:finguard@localhost/finguard
+          REDIS_URL: redis://localhost:6379
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: pytest -v --tb=short
+
+  build:
+    name: Build & Push Images
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        service: [fraud_service, llm_service, api_gateway]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push ${{ matrix.service }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          dockerfile: services/${{ matrix.service }}/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}:${{ github.sha }}
+
+  deploy:
+    name: Deploy to Kubernetes
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+      - name: Configure kubeconfig
+        run: echo "${{ secrets.KUBECONFIG }}" | base64 -d > $HOME/.kube/config
+      - name: Apply manifests
+        run: |
+          kubectl apply -f infra/k8s/namespace.yaml
+          kubectl apply -f infra/k8s/
+      - name: Update image tags
+        run: |
+          kubectl set image deployment/fraud-service fraud-service=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-fraud_service:${{ github.sha }} -n finguard
+          kubectl set image deployment/llm-service llm-service=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-llm_service:${{ github.sha }} -n finguard
+          kubectl set image deployment/api-gateway api-gateway=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api_gateway:${{ github.sha }} -n finguard
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/fraud-service -n finguard
+          kubectl rollout status deployment/llm-service -n finguard
+          kubectl rollout status deployment/api-gateway -n finguard

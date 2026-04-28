@@ -1,0 +1,33 @@
+# Secrets — NEVER commit these
+.env
+*.key
+*.pem
+
+# Trained model (large binary — regenerate with train_fraud_model.py)
+models/
+
+# Generated data (regenerate with generate_synthetic_data.py)
+data/raw/
+data/processed/
+
+# MLflow local runs
+mlruns/
+mlartifacts/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Feature store registry (auto-generated)
+feature_store/registry.db

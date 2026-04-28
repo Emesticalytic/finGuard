@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fraud-service
+  namespace: finguard
+  labels:
+    app: fraud-service
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: fraud-service
+  template:
+    metadata:
+      labels:
+        app: fraud-service
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8001"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: fraud-service
+          image: finguard/fraud-service:latest
+          ports:
+            - containerPort: 8001
+          env:
+            - name: DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: db-url
+            - name: REDIS_URL
+              value: redis://redis:6379
+            - name: MLFLOW_TRACKING_URI
+              value: http://mlflow:5000
+            - name: MODEL_NAME
+              value: fraud_detector
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 30
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fraud-service
+  namespace: finguard
+spec:
+  selector:
+    app: fraud-service
+  ports:
+    - port: 8001
+      targetPort: 8001

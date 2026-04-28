@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-service
+  namespace: finguard
+  labels:
+    app: llm-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: llm-service
+  template:
+    metadata:
+      labels:
+        app: llm-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8002"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: llm-service
+          image: finguard/llm-service:latest
+          ports:
+            - containerPort: 8002
+          env:
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: anthropic-api-key
+            - name: REDIS_URL
+              value: redis://redis:6379
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-service
+  namespace: finguard
+spec:
+  selector:
+    app: llm-service
+  ports:
+    - port: 8002
+      targetPort: 8002

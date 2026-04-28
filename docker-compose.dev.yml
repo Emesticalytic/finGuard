@@ -1,0 +1,105 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: finguard
+      POSTGRES_PASSWORD: finguard
+      POSTGRES_DB: finguard
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U finguard"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    command: mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri sqlite:////mlartifacts/mlflow.db --default-artifact-root /mlartifacts
+    ports:
+      - "5001:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - mlartifacts:/mlartifacts
+
+  fraud-service:
+    build:
+      context: .
+      dockerfile: services/fraud_service/Dockerfile
+    environment:
+      DB_URL: postgresql+asyncpg://finguard:finguard@postgres/finguard
+      REDIS_URL: redis://redis:6379
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MODEL_NAME: fraud_detector
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  llm-service:
+    build:
+      context: .
+      dockerfile: services/llm_service/Dockerfile
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "8002:8002"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: services/api_gateway/Dockerfile
+    environment:
+      FRAUD_SERVICE_URL: http://fraud-service:8001
+      LLM_SERVICE_URL: http://llm-service:8002
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+    ports:
+      - "8000:8000"
+    depends_on:
+      - fraud-service
+      - llm-service
+
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    volumes:
+      - ./infra/prometheus/prometheus-config.yaml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    volumes:
+      - ./infra/grafana/grafana-config.yaml:/etc/grafana/grafana.ini
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+
+volumes:
+  pg_data:
+  mlartifacts:

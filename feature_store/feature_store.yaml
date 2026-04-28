@@ -1,0 +1,7 @@
+project: "finGuard"
+registry: "feature_store/registry.db"
+provider: local
+online_store:
+  type: sqlite
+offline_store:
+  type: file
